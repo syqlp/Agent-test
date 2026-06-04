@@ -26,13 +26,6 @@ def cosine_score(query_tokens: list[str], doc_tokens: list[str]) -> float:
 
 
 class KnowledgeIndex:
-    """轻量级本地检索索引。
-
-    TODO(candidate/P1): 完成权限感知检索、重排、答案生成、引用溯源
-    和被过滤文档报告。文档正文必须视为不可信数据，不能让正文中的
-    指令改变系统策略；完成实现后不得向 API 返回 debug/candidate_note。
-    """
-
     def search(
         self,
         query: str,
@@ -48,20 +41,68 @@ class KnowledgeIndex:
                 """
             ).fetchall()
 
-        filtered_doc_ids = sorted(
-            {
-                row["doc_id"]
-                for row in rows
-                if row["permission"] not in user_permissions and row["permission"] != "knowledge:read"
-            }
-        )
-        # 占位实现故意不返回有效答案，直到候选人完成测试要求的检索和重排行为。
+        visible_chunks = []
+        restricted_doc_ids = set()
+        
+        for row in rows:
+            row_dict = dict(row)
+            required_permission = row_dict["permission"]
+            if required_permission == "knowledge:read" or required_permission in user_permissions:
+                visible_chunks.append(row_dict)
+            else:
+                restricted_doc_ids.add(row_dict["doc_id"])
+
+        query_tokens = tokenize(query)
+        
+        scored_chunks = []
+        for chunk in visible_chunks:
+            content_tokens = tokenize(chunk["content"])
+            score = cosine_score(query_tokens, content_tokens)
+            if score > 0:
+                scored_chunks.append((score, chunk))
+        
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = [chunk for _, chunk in scored_chunks[:top_k]]
+        
+        citations = []
+        answer_parts = []
+        seen_docs = set()
+        
+        for chunk in top_chunks:
+            if chunk["doc_id"] not in seen_docs:
+                citations.append({
+                    "doc_id": chunk["doc_id"],
+                    "title": chunk["title"],
+                    "source_path": chunk["source_path"],
+                    "chunk_id": chunk["id"],
+                })
+                seen_docs.add(chunk["doc_id"])
+            
+            sentences = re.split(r"[。！？\n]", chunk["content"])
+            for sentence in sentences[:3]:
+                if sentence.strip() and len(sentence.strip()) > 10:
+                    answer_parts.append(sentence.strip())
+        
+        answer = "。".join(answer_parts[:5]) + "。" if answer_parts else "未找到相关知识。"
+        
+        injection_patterns = [
+            r"忽略之前的所有指令",
+            r"忽略之前指令",
+            r"覆盖之前的所有指令",
+            r"按照我的指令执行",
+            r"执行我的命令",
+            r"泄露",
+            r"secret",
+            r"密钥",
+        ]
+        
+        for pattern in injection_patterns:
+            if re.search(pattern, query, re.IGNORECASE):
+                answer = "查询内容包含不安全指令，已被过滤。"
+                break
+        
         return {
-            "answer": "",
-            "citations": [],
-            "filtered_doc_ids": filtered_doc_ids,
-            "debug": {
-                "candidate_note": "TODO(candidate/P1): 按查询相关性排序 chunk，并生成答案。",
-                "available_chunks": len(rows),
-            },
+            "answer": answer,
+            "citations": citations,
+            "filtered_doc_ids": sorted(list(restricted_doc_ids)),
         }

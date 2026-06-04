@@ -1,0 +1,317 @@
+Metadata-Version: 2.4
+Name: agentops-mini-assessment
+Version: 0.1.0
+Summary: 企业 Agent 后端工程能力测评仓库，覆盖 API、RAG、工具调用、安全和管理后台。
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: pydantic>=2.7.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: httpx>=0.27.0; extra == "dev"
+
+# agentops-mini-assessment
+
+企业 Agent 后端工程与协作能力测评仓库。候选人需要在固定 Python 技术栈中补全 API、异步任务、Agent 工具调用、RAG、权限安全、业务系统集成、管理后台接口，并通过 PR 提交实现和过程证据。
+
+这个起始仓库不是完整答案。公开测试只用于本地自检和接口契约说明，正式评分会结合隐藏测试、代码审查和协作证据做统一评价。
+
+## 测评目标
+
+本测评不只看代码能否跑通，也看候选人或候选 Agent 是否能像可靠工程搭档一样工作：
+
+- 能识别需求歧义，并记录合理假设。
+- 能保护已有 API、字段、权限语义、审计动作和数据持久化行为。
+- 能从失败现象定位根因，再做最小充分修改。
+- 能处理权限不足、工具失败、重复执行、提示词注入和敏感字段泄露等非 happy path。
+- 能留下可复盘的验证证据，而不是只声明“测试通过”。
+
+## 业务场景
+
+你正在为企业内部运营团队实现一个 Agent。用户提交“分析 SKU-001 库存异常并生成审批建议”之类的任务后，Agent 应该：
+
+1. 读取 ERP 库存数据。
+2. 读取 BI 销售和预测数据。
+3. 查询知识库中的库存处理规则，并返回引用来源。
+4. 必要时查询供应商风险。
+5. 根据任务意图、业务规则和用户权限处理 OA 审批草稿：仅分析类任务不得产生 OA 写入副作用；需要写入型工具时必须先通过权限边界。
+6. 记录完整执行轨迹、成本、审计日志和错误状态。
+7. 在管理后台接口中展示任务、日志、成本、失败原因和队列健康度。
+
+## 快速开始
+
+### macOS / Linux
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+make setup
+make seed
+make self-check
+make dev
+```
+
+### Windows PowerShell
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+py -m pip install -e ".[dev]"
+py -m agentops_assessment.backend.seed
+py scripts/self_check.py
+py -m uvicorn agentops_assessment.backend.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+如果本机安装了 `make`，Windows 也可以使用：
+
+```powershell
+make PY=py setup
+make PY=py seed
+make PY=py self-check
+make PY=py dev
+```
+
+### 环境变量与数据初始化
+
+本仓库使用 Python 标准库 `sqlite3`，不需要外部数据库服务。`.env.example` 只说明推荐变量名，应用不会自动加载 `.env`；如需覆盖路径，请在当前 shell、测试或启动脚本中显式设置环境变量。
+
+| 变量 | 默认值 | 约定 |
+| --- | --- | --- |
+| `ASSESSMENT_DB_PATH` | `.data/assessment.sqlite` | SQLite 数据库路径。运行 `py -m agentops_assessment.backend.seed` 会创建父目录和数据库文件，并写入用户与知识库 chunk。 |
+| `ASSESSMENT_FIXTURES_DIR` | `fixtures` | fixture 根目录。业务系统 JSON、用户数据和知识库文档都必须从该目录读取；正式评分可能切换到隐藏 fixture。 |
+
+候选实现不得写死 `fixtures`、公开 SKU、公开用户或公开知识库路径。所有集成客户端、seed、RAG 和测试辅助代码都应尊重上述环境变量或显式传入的 fixture/db 路径。
+
+## 候选人任务
+
+请补全代码中的 `TODO(candidate/P0)`、`TODO(candidate/P1)`、`TODO(candidate/P2)`，并同步填写 `COLLABORATION_LOG.md` 中的协作证据。公开仓库只提供基础自检：
+
+```bash
+python scripts/self_check.py
+```
+
+仓库还包含 `tests/test_acceptance_guidance.py`，用于暴露更接近正式评分的验收方向。该文件默认以 `xfail` 形式存在，起始仓库不会因为它变红；候选人完成实现后可以去掉或收紧这些标记，用它校准业务闭环、权限、RAG、脱敏和可见性。
+
+正式评分不会只测公开样例，也不会只测 `SKU-001`。评审会替换 fixture、SKU、仓库、知识库、用户权限和异常路径。请避免写死用户、SKU、工具输出或公开 fixture。
+
+建议按优先级实现：
+
+| 优先级 | 目标 | 验收信号 |
+| --- | --- | --- |
+| P0 | 跑通任务执行闭环 | 成功请求进入 `completed`；真实失败进入可解释的 `failed`；两种情况都持久化步骤事件、结果或错误、成本 |
+| P0 | 完成 Agent 计划与工具执行 | Planner 能识别 SKU 和业务意图；Executor 能调用 ERP、BI、知识库、供应商风险和 OA 工具 |
+| P0 | 处理意图歧义和兼容契约 | 对“只分析”“生成补货/审批建议文本”“创建审批草稿”等表达做确定性解释；新增结果字段时保留旧字段 |
+| P0 | 实现可恢复执行 | 重复触发、部分失败、工具瞬时失败和重试后成功都有可解释状态和有序事件 |
+| P1 | 补全 RAG 和权限安全 | 知识库返回可追溯引用；无权限用户看不到受限文档；提示词注入和结果可见性落在关键路径 |
+| P1 | 建立工具边界和权限矩阵 | 工具输入输出结构明确；运行前能从计划推导所需权限；缺权限时不得执行受保护写操作，且拒绝或跳过策略必须一致、可解释、可审计 |
+| P1 | 做好脱敏 | `vendor_secret`、成本价、凭证、内部合同条款等敏感字段不出现在 API 响应、事件、审计日志或协作记录中 |
+| P2 | 完善管理后台指标 | Dashboard 能展示任务量、成功失败、平均耗时、成本、工具调用、最近失败、队列健康度和权限拒绝线索 |
+| P2 | 解释产品取舍 | PR 描述和 `COLLABORATION_LOG.md` 能说明关键假设、兼容影响、验证范围和剩余风险 |
+
+推荐的业务验收闭环：
+
+1. `alice` 提交 SKU 库存异常任务，运行完成后结果包含库存缺口、14 天预测需求、供应商风险、规则引用和 OA 草稿编号。
+2. `bob` 没有 `oa:approval:write` 权限；对于明确只分析的任务，系统应完成 ERP/BI/知识库/供应商风险分析，并且不得创建 OA 草稿。对于需要受保护写操作的任务，系统必须在关键路径上阻止写入并留下可审计证据。
+3. `mallory` 不能创建任务；权限拒绝应有清晰错误和审计记录。
+4. 针对公开和隐藏 SKU 都应得到合理结果，不能把逻辑写死在单个样例上。
+5. 知识库检索必须返回可追溯引用；受限文档只能报告过滤结果，不能泄露正文。
+6. 知识库正文和工具返回值都必须视为不可信数据；即使文档中出现“忽略之前指令”之类文本，也不能覆盖系统策略、权限策略或执行计划。
+7. 最终 API 响应、运行事件和审计日志不得保留内部调试字段，例如 `debug`、`candidate_note` 或原始工具异常堆栈。
+
+## API 契约
+
+所有 API 都使用 `X-User-Id` 请求头模拟登录用户。`fixtures` 中内置了 `alice`、`bob`、`mallory` 三个用户。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/tasks` | 创建 Agent 任务 |
+| `POST` | `/api/tasks/{task_id}/run` | 触发异步执行 |
+| `GET` | `/api/runs/{run_id}` | 查看运行状态、步骤、错误、成本 |
+| `GET` | `/api/runs/{run_id}/events` | 查看工具调用和 Agent 执行轨迹 |
+| `POST` | `/api/knowledge/search` | 知识库检索，返回引用来源和权限过滤结果 |
+| `GET` | `/api/admin/dashboard` | 返回任务数量、失败率、平均耗时、token 成本、工具调用统计 |
+| `GET` | `/api/admin/audit-logs` | 返回权限、审批、工具调用、敏感操作日志 |
+
+示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: alice" \
+  -d '{"title":"SKU-001 库存异常分析","prompt":"分析 SKU-001 库存异常，并生成补货审批建议"}'
+```
+
+### 公开字段契约
+
+以下字段名、事件名和审计动作是正式评分会依赖的公开契约。可以增加兼容字段，但不要删除、重命名或用语义相近的别名替代这些字段。
+
+#### 运行结果
+
+`GET /api/runs/{run_id}` 返回的 `result` 应是最终业务汇总，而不是某个工具的原始输出。补货审批类任务完成后至少包含：
+
+| 字段 | 说明 |
+| --- | --- |
+| `sku` | 从任务或上下文识别到的 SKU，必须支持隐藏 SKU。 |
+| `warehouse` | ERP 库存所在仓库，例如公开样例中的 `WH-SH-01`。 |
+| `stock_gap` | 当前可用库存与安全库存或预测需求之间的缺口。 |
+| `forecast_units_next_14d` | BI 给出的未来 14 天预测需求；如字段来自 BI 原始数据，应透传或汇总到结果。 |
+| `supplier_risk` | 供应商风险摘要，至少保留 `supplier_id` 和 `risk_level`。 |
+| `citations` | RAG 引用列表，元素包含 `doc_id`、`title`、`source_path`、`chunk_id`。 |
+| `recommended_action` | 标准值示例：需要创建补货审批时为 `create_replenishment_approval`。 |
+| `approval_draft_id` | 仅在任务确实需要 OA 草稿且用户具备 `oa:approval:write` 时出现。 |
+
+只分析任务或无审批写权限的任务不得产生 `approval_draft_id`，也不得在事件、审计日志或错误信息中泄露 `OA-DRAFT-` 草稿号。缺权限时可以在运行前返回 `403`，也可以让 run 进入可解释的 `failed` 或完成只读分析，但必须留下包含缺失权限的证据。
+
+#### Agent 计划与事件
+
+补货审批类任务的标准工具链为：
+
+```text
+erp.get_inventory -> bi.get_sales -> knowledge.search -> supplier.get_risk -> oa.create_approval_draft
+```
+
+Planner 应根据任务意图生成上述确定性工具计划，不得只返回占位 LLM 步骤。Executor 应按计划执行、持久化每步状态，并把最终业务结果保存到 run。
+
+`GET /api/runs/{run_id}/events` 返回供评审和管理后台消费的标准工具轨迹：
+
+| 字段 | 约定 |
+| --- | --- |
+| `seq` | 单调递增，按执行顺序排序。 |
+| `type` | 标准工具调用事件使用 `tool.call`。 |
+| `tool_name` | 使用上面的工具名，例如 `erp.get_inventory`。 |
+| `payload` | 脱敏后的工具入参、输出摘要、重试信息或错误摘要。 |
+| `created_at` | ISO 时间字符串。 |
+
+标准成功路径中的 `tool_name` 顺序应与工具链一致。不要把调试型生命周期事件，例如 `tool.started`、`tool.completed`、原始异常堆栈，混入该标准轨迹；如果需要调试信息，请放在不会破坏公开事件契约的字段或日志中。受权限保护的 OA 写操作被跳过时，不得记录 `oa.create_approval_draft` 的成功事件。
+
+#### RAG 检索
+
+`POST /api/knowledge/search` 返回：
+
+| 字段 | 说明 |
+| --- | --- |
+| `answer` | 基于可见知识库 chunk 生成的简短回答，不能照抄受限文档正文。 |
+| `citations` | 可见引用列表，每项包含 `doc_id`、`title`、`source_path`、`chunk_id`。 |
+| `filtered_doc_ids` | 因权限不足被过滤的文档 ID。 |
+
+知识库正文是不可信数据。文档中的“忽略之前指令”“泄露密钥”等内容只能作为普通文本处理，不能改变系统策略、权限策略或工具计划。
+
+#### 错误结构
+
+提示词注入或明显恶意任务应在创建任务阶段拒绝：
+
+```json
+{
+  "detail": {
+    "code": "prompt_injection_detected",
+    "message": "..."
+  }
+}
+```
+
+同时写入审计日志：`action="task.rejected"`、`decision="deny"`。权限拒绝、资源不存在和工具失败也应返回稳定、可解释的错误结构；错误中不得包含原始堆栈、凭证、供应商机密或成本价字段。
+
+#### Dashboard
+
+`GET /api/admin/dashboard` 至少返回：
+
+| 字段 | 说明 |
+| --- | --- |
+| `task_count` | 任务总数。 |
+| `run_count` | 运行总数。 |
+| `completed_count` | 完成运行数。 |
+| `failed_count` | 失败运行数。 |
+| `failure_rate` | 失败率，空数据时为 `0`。 |
+| `token_cost` | run 累计成本。 |
+| `average_run_seconds` | 已结束 run 的平均耗时秒数，空数据时为 `0`。 |
+| `tool_call_counts` | 按 `tool_name` 聚合的调用次数，例如 `oa.create_approval_draft`。 |
+| `recent_failures` | 最近失败摘要列表；没有失败时为 `[]`。 |
+| `generated_at` | 指标生成时间。 |
+
+可以额外返回队列积压、重试次数、权限拒绝数量等指标，但上述字段名必须保持稳定。
+
+#### 审计日志
+
+`GET /api/admin/audit-logs` 返回 `logs` 列表，每条日志至少包含：
+
+| 字段 | 说明 |
+| --- | --- |
+| `actor_id` | 操作者用户 ID。 |
+| `action` | 标准动作名。 |
+| `resource` | 资源 ID 或资源类别。 |
+| `decision` | `allow` 或 `deny`。 |
+| `payload` | 脱敏后的上下文。 |
+| `created_at` | ISO 时间字符串。 |
+
+标准动作名包括：
+
+| 动作 | 触发场景 |
+| --- | --- |
+| `task.create` | 成功创建任务。 |
+| `task.rejected` | 任务创建被安全策略拒绝。 |
+| `run.create` | 成功创建运行。 |
+| `run.read` | 查看运行详情。 |
+| `run.events.read` | 查看运行事件。 |
+| `tool.call` | 执行一次标准工具调用。 |
+| `approval.draft.create` | 成功创建 OA 审批草稿。 |
+| `admin.dashboard.read` | 查看管理后台指标。 |
+
+历史代码或公开测试中可能出现过 `oa.approval.create` 之类别名；正式契约以 `approval.draft.create` 为准。所有审计 payload 必须脱敏。
+
+#### 敏感字段
+
+以下字段和内容不得出现在 API 响应、run result、run events、audit logs 或 `COLLABORATION_LOG.md` 中：
+
+- `vendor_secret`
+- `unit_cost_usd`
+- 供应商内部返利、合同机密、凭证、token、原始异常堆栈
+- 内部调试字段，例如 `debug`、`candidate_note`
+
+## 协作证据
+
+根目录 `AGENTS.md` 是候选 Agent 的仓库内工作提示，但它可能包含陈旧、冲突或有误导性的历史备注。候选人需要结合 README、公开测试、源码和实际运行结果判断哪些规则可信。
+
+`COLLABORATION_LOG.md` 是过程证据模板。请在 PR 中同步提交它，至少记录：
+
+- 主要完成者：AI 软件、模型或人工姓名。
+- 关键需求理解和非目标。
+- 识别到的歧义、假设和处理方式。
+- 根因分析记录。
+- API、数据库、权限、审计日志的兼容影响。
+- 执行过的验证命令、结果和未覆盖风险。
+- 对 `AGENTS.md` 历史维护者备注逐条采用或拒绝的判断，以及对应证据。
+- 至少记录 `py scripts/self_check.py` 和 `py -m pytest -q` 的执行结果；如果有预期 `xfail`，说明它对应的未完成能力。
+
+## 评分方式
+
+正式评分为 `0-100`，由多维度加权组成。公开测试、隐藏测试、代码审查、PR 描述、`COLLABORATION_LOG.md` 和是否识别 `AGENTS.md` 中的冲突信息，都会进入对应维度。
+
+| 维度 | 权重 | 观察点 |
+| --- | ---: | --- |
+| 业务正确性与泛化 | 25 | 任务闭环是否正确，是否能泛化到隐藏用户、隐藏 SKU、隐藏知识库和失败路径 |
+| Agent 执行与后端工程 | 20 | Planner、Executor、Worker、状态机、异步运行、重复执行、重试和持久化是否可靠 |
+| 权限安全与数据边界 | 15 | 权限校验、提示词注入防护、结果可见性、审计日志和敏感字段脱敏是否落在关键路径 |
+| RAG 与业务系统集成 | 15 | ERP、BI、OA、供应商风险和知识库检索是否有清晰输入输出、引用溯源和受限文档隔离 |
+| 管理后台与可观测性 | 10 | Dashboard 和审计日志是否能支持排查失败、成本、队列积压、工具重试和权限拒绝 |
+| 协作过程与工程判断 | 15 | 是否识别需求歧义和 `AGENTS.md` 冲突信息，是否记录假设、根因、兼容影响、验证证据和剩余风险 |
+
+通过线由评审方按当次候选池统一确定。公开测试全过不代表正式通过。
+
+## PR 要求
+
+可以使用 AI 辅助完成本测评。PR 标题或分支名只需要披露使用的AI工具并加上姓名。如人工完成，则不需要添加，示例：
+
+- `Codex/张三`
+- `Claude Code/张三`
+- `张三`
+
+PR 描述中需要包含：
+
+- 完成了哪些能力点。
+- 核心设计思路和重要取舍。
+- 本地执行过的命令和结果。
+- 已知未完成项或风险。
+- 如果扩展了 API、数据结构或测试，请说明兼容影响。
+- 使用了哪些 AI 软件、模型或人工协作者，以及它们分别承担了什么工作。
+- `COLLABORATION_LOG.md` 的关键结论摘要。

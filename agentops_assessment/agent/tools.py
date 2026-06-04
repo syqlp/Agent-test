@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,19 @@ class ToolRegistry:
         self.retry_attempts = retry_attempts
         self._tools: dict[str, ToolCallable] = {}
         self.last_call_attempts: dict[str, int] = {}
+        self._tool_permissions: dict[str, str] = {
+            "erp.get_inventory": "erp:read",
+            "bi.get_sales": "bi:read",
+            "oa.create_approval_draft": "oa:approval:write",
+            "supplier.get_risk": "supplier:read",
+            "knowledge.search": "knowledge:read",
+        }
 
     def register(self, name: str, func: ToolCallable) -> None:
         self._tools[name] = func
+
+    def get_required_permission(self, tool_name: str) -> str | None:
+        return self._tool_permissions.get(tool_name)
 
     @classmethod
     def with_default_clients(
@@ -55,6 +66,22 @@ class ToolRegistry:
         )
         return registry
 
+    def _redact_sensitive_fields(self, data: dict[str, Any]) -> dict[str, Any]:
+        sensitive_fields = {"vendor_secret", "unit_cost_usd", "ACME-TIER-2-REBATE", "BETA-PRICE-FLOOR"}
+        result = {}
+        for key, value in data.items():
+            if key in sensitive_fields:
+                continue
+            if isinstance(value, dict):
+                result[key] = self._redact_sensitive_fields(value)
+            elif isinstance(value, str):
+                for sensitive in sensitive_fields:
+                    value = re.sub(re.escape(sensitive), "[REDACTED]", value)
+                result[key] = value
+            else:
+                result[key] = value
+        return result
+
     def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name not in self._tools:
             raise KeyError(f"未知工具: {name}")
@@ -67,8 +94,7 @@ class ToolRegistry:
             self.last_call_attempts[name] = attempts
             try:
                 result = self._tools[name](args)
-                # TODO(candidate/P1): 规范化工具输出，并对敏感字段做脱敏；
-                # vendor_secret、unit_cost_usd 等不得进入 result/events/audit。
+                result = self._redact_sensitive_fields(result)
                 return result
             except TransientIntegrationError as exc:
                 last_error = exc

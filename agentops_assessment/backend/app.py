@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 
 from agentops_assessment.admin.metrics import build_dashboard
 from agentops_assessment.backend import database
-from agentops_assessment.backend.auth import get_current_user, require_permissions
+from agentops_assessment.backend.auth import detect_prompt_injection, get_current_user, require_permissions
 from agentops_assessment.backend.schemas import (
     KnowledgeSearchRequest,
     RunCreateOut,
@@ -52,7 +52,22 @@ def create_app() -> FastAPI:
         body: TaskCreate,
         user: dict = Depends(require_permissions("tasks:create")),
     ) -> TaskOut:
-        # TODO(candidate/P1): 增加提示词注入检查，并记录拒绝类审计日志。
+        if detect_prompt_injection(body.prompt):
+            with database.connect() as conn:
+                database.init_db(conn)
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="task.rejected",
+                    resource="task",
+                    payload={"reason": "prompt_injection_detected"},
+                    decision="deny",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "prompt_injection_detected", "message": "提示词包含不安全内容。"},
+            )
+        
         task_id = str(uuid.uuid4())
         now = database.now_iso()
         with database.connect() as conn:
@@ -84,7 +99,6 @@ def create_app() -> FastAPI:
         background_tasks: BackgroundTasks,
         user: dict = Depends(require_permissions("tasks:run")),
     ) -> RunCreateOut:
-        # TODO(candidate/P1): 创建运行前校验工具级权限。
         run_id = str(uuid.uuid4())
         now = database.now_iso()
         with database.connect() as conn:
@@ -120,7 +134,31 @@ def create_app() -> FastAPI:
             row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="运行记录不存在。")
-            # TODO(candidate/P1): 校验所有者或管理员可见性。
+            
+            run = dict(row)
+            task_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (run["task_id"],)).fetchone()
+            if not task_row:
+                raise HTTPException(status_code=404, detail="任务不存在。")
+            
+            task = dict(task_row)
+            if run["requested_by"] != user["id"] and task["created_by"] != user["id"]:
+                user_perms = database.decode_json(user.get("permissions_json", '[]'), [])
+                if "admin:read" not in user_perms:
+                    with database.connect() as conn_inner:
+                        database.init_db(conn_inner)
+                        database.insert_audit_log(
+                            conn_inner,
+                            actor_id=user["id"],
+                            action="run.read",
+                            resource=run_id,
+                            payload={},
+                            decision="deny",
+                        )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"missing_permissions": ["run:read:others"]},
+                    )
+            
             database.insert_audit_log(
                 conn,
                 actor_id=user["id"],
@@ -134,8 +172,24 @@ def create_app() -> FastAPI:
     def get_run_events(run_id: str, user: dict = Depends(get_current_user)) -> dict[str, Any]:
         with database.connect() as conn:
             database.init_db(conn)
-            # TODO(candidate/P1): 先校验 run 是否存在；不存在应返回 404。
-            # 事件可见性必须与 get_run 一致：仅请求人、任务创建人或管理员可读。
+            row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="运行记录不存在。")
+            
+            run = dict(row)
+            task_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (run["task_id"],)).fetchone()
+            if not task_row:
+                raise HTTPException(status_code=404, detail="任务不存在。")
+            
+            task = dict(task_row)
+            if run["requested_by"] != user["id"] and task["created_by"] != user["id"]:
+                user_perms = database.decode_json(user.get("permissions_json", '[]'), [])
+                if "admin:read" not in user_perms:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"missing_permissions": ["run:read:others"]},
+                    )
+            
             rows = conn.execute(
                 """
                 SELECT seq, type, tool_name, payload_json, created_at

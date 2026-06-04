@@ -7,7 +7,7 @@ name = "agentops-mini-assessment"
 version = "0.1.0"
 description = "企业 Agent 后端工程能力测评仓库，覆盖 API、RAG、工具调用、安全和管理后台。"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
